@@ -2,91 +2,7 @@ import React, { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 
-/* =================== Simple Octree =================== */
-class OctreeNode {
-  constructor(min, max, depth = 0) {
-    this.min = min;
-    this.max = max;
-    this.depth = depth;
-    this.points = [];
-    this.children = null;
-  }
-
-  insert(p) {
-    if (this.children) {
-      return this._insertChild(p);
-    }
-
-    this.points.push(p);
-
-    if (this.points.length > 64 && this.depth < 6) {
-      this.subdivide();
-    }
-  }
-
-  subdivide() {
-    this.children = [];
-    const { min, max } = this;
-    const mx = (min.x + max.x) * 0.5;
-    const my = (min.y + max.y) * 0.5;
-    const mz = (min.z + max.z) * 0.5;
-
-    for (let xi = 0; xi < 2; xi++) {
-      for (let yi = 0; yi < 2; yi++) {
-        for (let zi = 0; zi < 2; zi++) {
-          this.children.push(
-            new OctreeNode(
-              new THREE.Vector3(
-                xi ? mx : min.x,
-                yi ? my : min.y,
-                zi ? mz : min.z
-              ),
-              new THREE.Vector3(
-                xi ? max.x : mx,
-                yi ? max.y : my,
-                zi ? max.z : mz
-              ),
-              this.depth + 1
-            )
-          );
-        }
-      }
-    }
-
-    for (const p of this.points) this._insertChild(p);
-    this.points.length = 0;
-  }
-
-  _insertChild(p) {
-    for (const c of this.children) {
-      if (
-        p.x >= c.min.x &&
-        p.x <= c.max.x &&
-        p.y >= c.min.y &&
-        p.y <= c.max.y &&
-        p.z >= c.min.z &&
-        p.z <= c.max.z
-      ) {
-        c.insert(p);
-        return;
-      }
-    }
-  }
-
-  query(frustum, out) {
-    const box = new THREE.Box3(this.min, this.max);
-    if (!frustum.intersectsBox(box)) return;
-
-    if (this.children) {
-      for (const c of this.children) c.query(frustum, out);
-    } else {
-      for (const p of this.points) out.push(p);
-    }
-  }
-}
-
-/* =================== React Component =================== */
-export default function PointCloudNearOctreeLOD() {
+export default function App() {
   const mountRef = useRef(null);
 
   useEffect(() => {
@@ -94,7 +10,7 @@ export default function PointCloudNearOctreeLOD() {
     const w = container.clientWidth;
     const h = container.clientHeight;
 
-    /* ---------- Scene ---------- */
+    /* ---------- basic ---------- */
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(w, h);
     container.appendChild(renderer.domElement);
@@ -108,75 +24,67 @@ export default function PointCloudNearOctreeLOD() {
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
 
-    /* ---------- Parameters ---------- */
-    const POINT_COUNT = 1000_000; // 👈 改成 500_000 试
-    const WORLD_SIZE = 400;
+    /* ---------- params ---------- */
+    const POINT_COUNT = 1000_000; // 先别 500k
+    const WORLD = 400;
 
     const NEAR_DIST = 80;
     const MID_DIST = 200;
-
     const MID_STEP = 4;
     const FAR_STEP = 10;
 
-    /* ---------- Data ---------- */
+    /* ---------- data ---------- */
     const positions = new Float32Array(POINT_COUNT * 3);
     const velocities = new Float32Array(POINT_COUNT * 3);
 
     for (let i = 0; i < POINT_COUNT; i++) {
       const i3 = i * 3;
-      positions[i3] = (Math.random() - 0.5) * WORLD_SIZE;
-      positions[i3 + 1] = (Math.random() - 0.5) * WORLD_SIZE * 0.3;
-      positions[i3 + 2] = (Math.random() - 0.5) * WORLD_SIZE;
+      positions[i3] = (Math.random() - 0.5) * WORLD;
+      positions[i3 + 1] = (Math.random() - 0.5) * WORLD * 0.3;
+      positions[i3 + 2] = (Math.random() - 0.5) * WORLD;
 
       velocities[i3] = (Math.random() - 0.5) * 0.1;
       velocities[i3 + 1] = (Math.random() - 0.5) * 0.05;
       velocities[i3 + 2] = (Math.random() - 0.5) * 0.1;
     }
 
-    /* ---------- Instanced Meshes ---------- */
+    /* ---------- meshes ---------- */
     const geom = new THREE.SphereGeometry(0.5, 6, 6);
     const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
 
     const nearMesh = new THREE.InstancedMesh(geom, mat, POINT_COUNT);
-    const midMesh = new THREE.InstancedMesh(
-      geom,
-      mat,
-      Math.floor(POINT_COUNT / MID_STEP)
-    );
-    const farMesh = new THREE.InstancedMesh(
-      geom,
-      mat,
-      Math.floor(POINT_COUNT / FAR_STEP)
-    );
+    const midMesh = new THREE.InstancedMesh(geom, mat, POINT_COUNT / MID_STEP);
+    const farMesh = new THREE.InstancedMesh(geom, mat, POINT_COUNT / FAR_STEP);
 
-    for (const m of [nearMesh, midMesh, farMesh]) {
+    [nearMesh, midMesh, farMesh].forEach((m) => {
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       scene.add(m);
-    }
+    });
 
     const tmpMat = new THREE.Matrix4();
     const camPos = new THREE.Vector3();
-    const frustum = new THREE.Frustum();
-    const projMat = new THREE.Matrix4();
 
-    /* ---------- Animation ---------- */
+    /* ---------- worker ---------- */
+    const worker = new Worker(new URL("./octree.worker.js", import.meta.url));
+
+    let reducedNear = new Float32Array(0);
+
+    worker.onmessage = (e) => {
+      reducedNear = new Float32Array(e.data.buffer);
+    };
+
+    /* ---------- animate ---------- */
     function animate() {
       requestAnimationFrame(animate);
-
       controls.update();
       camera.getWorldPosition(camPos);
 
-      projMat.multiplyMatrices(
-        camera.projectionMatrix,
-        camera.matrixWorldInverse
-      );
-      frustum.setFromProjectionMatrix(projMat);
-
-      let nearPoints = [];
+      let nearWrite = 0;
       let midCount = 0;
       let farCount = 0;
 
-      /* --------- classify points --------- */
+      const nearTemp = new Float32Array(POINT_COUNT * 3);
+
       for (let i = 0; i < POINT_COUNT; i++) {
         const i3 = i * 3;
 
@@ -190,11 +98,9 @@ export default function PointCloudNearOctreeLOD() {
         const d2 = dx * dx + dy * dy + dz * dz;
 
         if (d2 < NEAR_DIST * NEAR_DIST) {
-          nearPoints.push({
-            x: positions[i3],
-            y: positions[i3 + 1],
-            z: positions[i3 + 2],
-          });
+          nearTemp[nearWrite++] = positions[i3];
+          nearTemp[nearWrite++] = positions[i3 + 1];
+          nearTemp[nearWrite++] = positions[i3 + 2];
         } else if (d2 < MID_DIST * MID_DIST && i % MID_STEP === 0) {
           tmpMat.makeTranslation(
             positions[i3],
@@ -212,20 +118,20 @@ export default function PointCloudNearOctreeLOD() {
         }
       }
 
-      /* --------- Near: Octree + Frustum --------- */
-      const root = new OctreeNode(
-        new THREE.Vector3(-WORLD_SIZE, -WORLD_SIZE, -WORLD_SIZE),
-        new THREE.Vector3(WORLD_SIZE, WORLD_SIZE, WORLD_SIZE)
+      /* send near to worker (Transferable) */
+      worker.postMessage(
+        { buffer: nearTemp.buffer, count: nearWrite / 3 },
+        [nearTemp.buffer]
       );
 
-      for (const p of nearPoints) root.insert(p);
-
-      const visibleNear = [];
-      root.query(frustum, visibleNear);
-
+      /* draw reduced near */
       let nearCount = 0;
-      for (const p of visibleNear) {
-        tmpMat.makeTranslation(p.x, p.y, p.z);
+      for (let i = 0; i < reducedNear.length; i += 3) {
+        tmpMat.makeTranslation(
+          reducedNear[i],
+          reducedNear[i + 1],
+          reducedNear[i + 2]
+        );
         nearMesh.setMatrixAt(nearCount++, tmpMat);
       }
 
@@ -242,12 +148,7 @@ export default function PointCloudNearOctreeLOD() {
 
     animate();
 
-    return () => {
-      renderer.dispose();
-      geom.dispose();
-      mat.dispose();
-      container.removeChild(renderer.domElement);
-    };
+    return () => worker.terminate();
   }, []);
 
   return <div ref={mountRef} style={{ width: "100%", height: "100vh" }} />;
