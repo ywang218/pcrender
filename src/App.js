@@ -2,30 +2,114 @@ import React, { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 
-export default function PointCloudLOD() {
+/* =================== Simple Octree =================== */
+class OctreeNode {
+  constructor(min, max, depth = 0) {
+    this.min = min;
+    this.max = max;
+    this.depth = depth;
+    this.points = [];
+    this.children = null;
+  }
+
+  insert(p) {
+    if (this.children) {
+      return this._insertChild(p);
+    }
+
+    this.points.push(p);
+
+    if (this.points.length > 64 && this.depth < 6) {
+      this.subdivide();
+    }
+  }
+
+  subdivide() {
+    this.children = [];
+    const { min, max } = this;
+    const mx = (min.x + max.x) * 0.5;
+    const my = (min.y + max.y) * 0.5;
+    const mz = (min.z + max.z) * 0.5;
+
+    for (let xi = 0; xi < 2; xi++) {
+      for (let yi = 0; yi < 2; yi++) {
+        for (let zi = 0; zi < 2; zi++) {
+          this.children.push(
+            new OctreeNode(
+              new THREE.Vector3(
+                xi ? mx : min.x,
+                yi ? my : min.y,
+                zi ? mz : min.z
+              ),
+              new THREE.Vector3(
+                xi ? max.x : mx,
+                yi ? max.y : my,
+                zi ? max.z : mz
+              ),
+              this.depth + 1
+            )
+          );
+        }
+      }
+    }
+
+    for (const p of this.points) this._insertChild(p);
+    this.points.length = 0;
+  }
+
+  _insertChild(p) {
+    for (const c of this.children) {
+      if (
+        p.x >= c.min.x &&
+        p.x <= c.max.x &&
+        p.y >= c.min.y &&
+        p.y <= c.max.y &&
+        p.z >= c.min.z &&
+        p.z <= c.max.z
+      ) {
+        c.insert(p);
+        return;
+      }
+    }
+  }
+
+  query(frustum, out) {
+    const box = new THREE.Box3(this.min, this.max);
+    if (!frustum.intersectsBox(box)) return;
+
+    if (this.children) {
+      for (const c of this.children) c.query(frustum, out);
+    } else {
+      for (const p of this.points) out.push(p);
+    }
+  }
+}
+
+/* =================== React Component =================== */
+export default function PointCloudNearOctreeLOD() {
   const mountRef = useRef(null);
 
   useEffect(() => {
     const container = mountRef.current;
-    const width = container.clientWidth;
-    const height = container.clientHeight;
+    const w = container.clientWidth;
+    const h = container.clientHeight;
 
-    /* ---------------- Renderer / Scene / Camera ---------------- */
+    /* ---------- Scene ---------- */
     const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(width, height);
+    renderer.setSize(w, h);
     container.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0a0a0a);
 
-    const camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 2000);
+    const camera = new THREE.PerspectiveCamera(60, w / h, 0.1, 2000);
     camera.position.set(0, 80, 200);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
 
-    /* ---------------- Parameters ---------------- */
-    const POINT_COUNT = 500_000; // 👈 改成 500_000 也可以试
+    /* ---------- Parameters ---------- */
+    const POINT_COUNT = 1000_000; // 👈 改成 500_000 试
     const WORLD_SIZE = 400;
 
     const NEAR_DIST = 80;
@@ -34,7 +118,7 @@ export default function PointCloudLOD() {
     const MID_STEP = 4;
     const FAR_STEP = 10;
 
-    /* ---------------- Generate Data ---------------- */
+    /* ---------- Data ---------- */
     const positions = new Float32Array(POINT_COUNT * 3);
     const velocities = new Float32Array(POINT_COUNT * 3);
 
@@ -49,39 +133,53 @@ export default function PointCloudLOD() {
       velocities[i3 + 2] = (Math.random() - 0.5) * 0.1;
     }
 
-    /* ---------------- Shared Geometry & Material ---------------- */
-    const baseGeometry = new THREE.SphereGeometry(0.5, 6, 6);
-    const material = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    /* ---------- Instanced Meshes ---------- */
+    const geom = new THREE.SphereGeometry(0.5, 6, 6);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
 
-    function createInstancedMesh(maxCount) {
-      const mesh = new THREE.InstancedMesh(baseGeometry, material, maxCount);
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      scene.add(mesh);
-      return mesh;
+    const nearMesh = new THREE.InstancedMesh(geom, mat, POINT_COUNT);
+    const midMesh = new THREE.InstancedMesh(
+      geom,
+      mat,
+      Math.floor(POINT_COUNT / MID_STEP)
+    );
+    const farMesh = new THREE.InstancedMesh(
+      geom,
+      mat,
+      Math.floor(POINT_COUNT / FAR_STEP)
+    );
+
+    for (const m of [nearMesh, midMesh, farMesh]) {
+      m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      scene.add(m);
     }
-
-    const nearMesh = createInstancedMesh(POINT_COUNT);
-    const midMesh = createInstancedMesh(Math.floor(POINT_COUNT / MID_STEP));
-    const farMesh = createInstancedMesh(Math.floor(POINT_COUNT / FAR_STEP));
 
     const tmpMat = new THREE.Matrix4();
     const camPos = new THREE.Vector3();
+    const frustum = new THREE.Frustum();
+    const projMat = new THREE.Matrix4();
 
-    /* ---------------- Animation ---------------- */
+    /* ---------- Animation ---------- */
     function animate() {
       requestAnimationFrame(animate);
 
       controls.update();
       camera.getWorldPosition(camPos);
 
-      let nearCount = 0;
+      projMat.multiplyMatrices(
+        camera.projectionMatrix,
+        camera.matrixWorldInverse
+      );
+      frustum.setFromProjectionMatrix(projMat);
+
+      let nearPoints = [];
       let midCount = 0;
       let farCount = 0;
 
+      /* --------- classify points --------- */
       for (let i = 0; i < POINT_COUNT; i++) {
         const i3 = i * 3;
 
-        // move points
         positions[i3] += velocities[i3];
         positions[i3 + 1] += velocities[i3 + 1];
         positions[i3 + 2] += velocities[i3 + 2];
@@ -89,19 +187,15 @@ export default function PointCloudLOD() {
         const dx = positions[i3] - camPos.x;
         const dy = positions[i3 + 1] - camPos.y;
         const dz = positions[i3 + 2] - camPos.z;
-        const dist2 = dx * dx + dy * dy + dz * dz;
+        const d2 = dx * dx + dy * dy + dz * dz;
 
-        if (dist2 < NEAR_DIST * NEAR_DIST) {
-          tmpMat.makeTranslation(
-            positions[i3],
-            positions[i3 + 1],
-            positions[i3 + 2]
-          );
-          nearMesh.setMatrixAt(nearCount++, tmpMat);
-        } else if (
-          dist2 < MID_DIST * MID_DIST &&
-          i % MID_STEP === 0
-        ) {
+        if (d2 < NEAR_DIST * NEAR_DIST) {
+          nearPoints.push({
+            x: positions[i3],
+            y: positions[i3 + 1],
+            z: positions[i3 + 2],
+          });
+        } else if (d2 < MID_DIST * MID_DIST && i % MID_STEP === 0) {
           tmpMat.makeTranslation(
             positions[i3],
             positions[i3 + 1],
@@ -116,6 +210,23 @@ export default function PointCloudLOD() {
           );
           farMesh.setMatrixAt(farCount++, tmpMat);
         }
+      }
+
+      /* --------- Near: Octree + Frustum --------- */
+      const root = new OctreeNode(
+        new THREE.Vector3(-WORLD_SIZE, -WORLD_SIZE, -WORLD_SIZE),
+        new THREE.Vector3(WORLD_SIZE, WORLD_SIZE, WORLD_SIZE)
+      );
+
+      for (const p of nearPoints) root.insert(p);
+
+      const visibleNear = [];
+      root.query(frustum, visibleNear);
+
+      let nearCount = 0;
+      for (const p of visibleNear) {
+        tmpMat.makeTranslation(p.x, p.y, p.z);
+        nearMesh.setMatrixAt(nearCount++, tmpMat);
       }
 
       nearMesh.count = nearCount;
@@ -133,8 +244,8 @@ export default function PointCloudLOD() {
 
     return () => {
       renderer.dispose();
-      baseGeometry.dispose();
-      material.dispose();
+      geom.dispose();
+      mat.dispose();
       container.removeChild(renderer.domElement);
     };
   }, []);
