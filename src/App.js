@@ -383,12 +383,22 @@ import React, { useEffect, useRef } from "react";
 import * as THREE from "three";
 // 必须引入 OrbitControls
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
+import Stats from "stats.js";
 
 export default function FastPointTextureRender() {
   const mountRef = useRef(null);
 
   useEffect(() => {
     const container = mountRef.current;
+
+    const stats = new Stats();
+    stats.showPanel(0); // 0: fps, 1: ms, 2: mb, 3+: custom
+    // 设置样式使其位于左上角
+    stats.dom.style.position = 'absolute';
+    stats.dom.style.top = '0px';
+    stats.dom.style.left = '0px';
+    container.appendChild(stats.dom);
+
     const renderer = new THREE.WebGLRenderer({ antialias: false });
     renderer.setSize(container.clientWidth, container.clientHeight);
     container.appendChild(renderer.domElement);
@@ -403,7 +413,7 @@ export default function FastPointTextureRender() {
     controls.enableDamping = true; // 增加平滑感
     controls.zoomSpeed = 1.2;
 
-    const size = 1800;
+    const size = 3400;
     const POINT_COUNT = size * size;
 
     const data = new Float32Array(POINT_COUNT * 4);
@@ -464,15 +474,27 @@ export default function FastPointTextureRender() {
     const points = new THREE.Points(geometry, material);
     scene.add(points);
 
-    // 模拟数据更新
-    const updateBackendData = () => {
-      // 仅演示波动效果
-      for (let i = 0; i < 10000; i++) { // 局部更新以保证性能演示
-        const idx = Math.floor(Math.random() * POINT_COUNT) * 4;
-        data[idx] += (Math.random() - 0.5) * 0.5;
-      }
-      texture.needsUpdate = true;
-    };
+    const worker = new Worker(new URL('./data_stream.worker.js', import.meta.url));
+        
+    worker.postMessage({ type: 'init', POINT_COUNT });
+
+    worker.onmessage = (e) => {
+        if (e.data.type === 'update') {
+            // 直接替换 Texture 的数据引用，这是最快的更新方式
+            texture.image.data = e.data.buffer;
+            texture.needsUpdate = true;
+        }
+    };  
+    
+    // // 模拟数据更新
+    // const updateBackendData = () => {
+    //   // 仅演示波动效果
+    //   for (let i = 0; i < 10000; i++) { // 局部更新以保证性能演示
+    //     const idx = Math.floor(Math.random() * POINT_COUNT) * 4;
+    //     data[idx] += (Math.random() - 0.5) * 0.5;
+    //   }
+    //   texture.needsUpdate = true;
+    // };
 
     function animate() {
       requestAnimationFrame(animate);
@@ -480,7 +502,7 @@ export default function FastPointTextureRender() {
       // 更新控制器（必须）
       controls.update();
       
-      updateBackendData(); 
+      // updateBackendData(); 
       renderer.render(scene, camera);
     }
     animate();
