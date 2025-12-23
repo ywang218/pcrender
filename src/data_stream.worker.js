@@ -22,9 +22,9 @@ function startStreaming(count) {
             const i4 = i * 4;
             // 模拟动态数据：你可以这里替换为真实的二进制解析逻辑
             // 例如：buffer[i4] = dataView.getFloat32(i * 12); 
-            pointBuffer[i4] += (Math.random() - 0.5) * 0.2;     // X
-            pointBuffer[i4 + 1] += (Math.random() - 0.5) * 0.1; // Y
-            pointBuffer[i4 + 2] += (Math.random() - 0.5) * 0.2; // Z
+            pointBuffer[i4] += (Math.random() - 0.5) * 20;     // X
+            pointBuffer[i4 + 1] += (Math.random() - 0.5) * 10; // Y
+            pointBuffer[i4 + 2] += (Math.random() - 0.5) * 20; // Z
             pointBuffer[i4 + 3] = 1.0;                          // W (Intensity/Alpha)
         }
 
@@ -36,5 +36,5 @@ function startStreaming(count) {
             type: 'update',
             buffer: transferBuffer
         }, [transferBuffer.buffer]); // 第二个参数将 buffer 权限转让，主线程接收后 Worker 端的该 buffer 长度将变为 0
-    }, 50);
+    }, 200);
 }

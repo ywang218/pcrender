@@ -38,7 +38,7 @@ export default function FastPointTextureRender() {
     controls.enableDamping = true; // 增加平滑感
     controls.zoomSpeed = 1.2;
 
-    const size = 1700;             // 2500000->50FPS, 10000000->20FPS         
+    const size = 1600 // 2243 // 3300;             // 2500000->50FPS, 10000000->20FPS  5000000->35FPS       
     const POINT_COUNT = size * size;
 
     const data = new Float32Array(POINT_COUNT * 4);
@@ -101,7 +101,7 @@ export default function FastPointTextureRender() {
 
     const worker = new Worker(new URL('./data_stream.worker.js', import.meta.url));
         
-    worker.postMessage({ type: 'init', POINT_COUNT });
+    worker.postMessage({ type: 'init', count: POINT_COUNT });
 
     worker.onmessage = (e) => {
         if (e.data.type === 'update') {
