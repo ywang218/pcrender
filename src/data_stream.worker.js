@@ -36,5 +36,5 @@ function startStreaming(count) {
             type: 'update',
             buffer: transferBuffer
         }, [transferBuffer.buffer]); // 第二个参数将 buffer 权限转让，主线程接收后 Worker 端的该 buffer 长度将变为 0
-    }, 200);
+    }, 50);
 }
