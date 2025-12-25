@@ -6,6 +6,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import Stats from "stats.js";
 
+/* global SharedArrayBuffer */
 export default function FastPointTextureRender() {
   const mountRef = useRef(null);
   const initedRef = useRef(false);
@@ -40,8 +41,10 @@ export default function FastPointTextureRender() {
 
     const size = 1600 // 2243 // 3300;             // 2500000->50FPS, 10000000->20FPS  5000000->35FPS       
     const POINT_COUNT = size * size;
+    const FLOATS_PER_POINT = 4
+    const sab = new SharedArrayBuffer(POINT_COUNT * FLOATS_PER_POINT * 4)
 
-    const data = new Float32Array(POINT_COUNT * 4);
+    const data = new Float32Array(sab) // new Float32Array(POINT_COUNT * 4);
     // 填充初始数据，防止黑屏
     for(let i=0; i<data.length; i++) data[i] = (Math.random()-0.5) * 500;
     
@@ -101,15 +104,15 @@ export default function FastPointTextureRender() {
 
     const worker = new Worker(new URL('./data_stream.worker.js', import.meta.url));
         
-    worker.postMessage({ type: 'init', count: POINT_COUNT });
+    worker.postMessage({ type: 'init', sab: sab, count: POINT_COUNT });
 
-    worker.onmessage = (e) => {
-        if (e.data.type === 'update') {
-            // 直接替换 Texture 的数据引用，这是最快的更新方式
-            texture.image.data = e.data.buffer;
-            texture.needsUpdate = true;
-        }
-    };  
+    // worker.onmessage = (e) => {
+    //     if (e.data.type === 'update') {
+    //         // 直接替换 Texture 的数据引用，这是最快的更新方式
+    //         texture.image.data = e.data.buffer;
+    //         texture.needsUpdate = true;
+    //     }
+    // };  
     
     // // 模拟数据更新
     // const updateBackendData = () => {
@@ -123,6 +126,7 @@ export default function FastPointTextureRender() {
 
     function animate() {
       requestAnimationFrame(animate);
+      texture.needsUpdate = true;
       stats.update();
       // 更新控制器（必须）
       controls.update();

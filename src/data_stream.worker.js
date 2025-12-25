@@ -3,19 +3,20 @@
 
 // 预分配一个缓冲区，避免频繁创建对象
 let pointBuffer;
-
+let count
 self.onmessage = (e) => {
-    const { type, count } = e.data;
-
-    if (type === 'init') {
+    // const { type, count, sab } = e.data;
+    // console.log("sab is: ", sab)
+    if (e.data.type === 'init') {
         // 每个点 4 个分量 (x, y, z, a)
-        pointBuffer = new Float32Array(count * 4);
-        startStreaming(count);
+        count = e.data.count
+        pointBuffer = new Float32Array(e.data.sab);
+        startStreaming(e.data.count);
     }
 };
 
 function startStreaming(count) {
-    // 模拟每 50ms (20Hz) 接收一帧后端数据
+    // 模拟每 100ms (10Hz) 接收一帧后端数据
     setInterval(() => {
         // 假设这里是接收到的原始二进制数据解析过程
         for (let i = 0; i < count; i++) {
@@ -28,13 +29,13 @@ function startStreaming(count) {
             pointBuffer[i4 + 3] = 1.0;                          // W (Intensity/Alpha)
         }
 
-        // 【关键】创建副本并转移所有权
-        // 为了能在下一次循环继续使用 pointBuffer，我们传出一个 Copy
-        const transferBuffer = new Float32Array(pointBuffer);
+        // // 【关键】创建副本并转移所有权
+        // // 为了能在下一次循环继续使用 pointBuffer，我们传出一个 Copy
+        // const transferBuffer = new Float32Array(pointBuffer);
         
-        self.postMessage({
-            type: 'update',
-            buffer: transferBuffer
-        }, [transferBuffer.buffer]); // 第二个参数将 buffer 权限转让，主线程接收后 Worker 端的该 buffer 长度将变为 0
-    }, 50);
+        // self.postMessage({
+        //     type: 'update',
+        //     buffer: transferBuffer
+        // }, [transferBuffer.buffer]); // 第二个参数将 buffer 权限转让，主线程接收后 Worker 端的该 buffer 长度将变为 0
+    }, 100);
 }
