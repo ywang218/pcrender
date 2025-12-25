@@ -1,6 +1,10 @@
 /* eslint-env worker */
 /* eslint-disable no-restricted-globals */
 
+/* data_stream.worker.js */
+
+
+
 // 预分配一个缓冲区，避免频繁创建对象
 let pointBuffer;
 let count
@@ -11,8 +15,22 @@ self.onmessage = (e) => {
         // 每个点 4 个分量 (x, y, z, a)
         count = e.data.count
         pointBuffer = new Float32Array(e.data.sab);
-        startStreaming(e.data.count);
+        // startStreaming(e.data.count);
     }
+    if(e.data.type == "frame") {
+        const incoming = new Float32Array(e.data.buffer);
+
+        // console.log("count is: ", count,"incoming is: ", incoming, incoming.buffer.byteLength, incoming.length)
+    // 模拟 decode 后 → 写 SAB
+    for (let i = 0; i < count; i++) {
+      const b = i * 4;
+      pointBuffer[b + 0] += incoming[(b + 0)%incoming.length];
+      pointBuffer[b + 1] += incoming[(b + 1)%incoming.length];
+      pointBuffer[b + 2] += incoming[(b + 2)%incoming.length];
+      pointBuffer[b + 3] = 1.0;
+    }
+    }
+
 };
 
 function startStreaming(count) {

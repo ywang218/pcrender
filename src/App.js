@@ -39,7 +39,7 @@ export default function FastPointTextureRender() {
     controls.enableDamping = true; // 增加平滑感
     controls.zoomSpeed = 1.2;
 
-    const size = 1600 // 2243 // 3300;             // 2500000->50FPS, 10000000->20FPS  5000000->35FPS       
+    const size = 1000 // 2243 // 3300;             // 2500000->50FPS, 10000000->20FPS  5000000->35FPS       
     const POINT_COUNT = size * size;
     const FLOATS_PER_POINT = 4
     const sab = new SharedArrayBuffer(POINT_COUNT * FLOATS_PER_POINT * 4)
@@ -105,6 +105,26 @@ export default function FastPointTextureRender() {
     const worker = new Worker(new URL('./data_stream.worker.js', import.meta.url));
         
     worker.postMessage({ type: 'init', sab: sab, count: POINT_COUNT });
+    const FRAME_BYTES = POINT_COUNT * 4 * 4;
+    setInterval(() => {
+      // 模拟「decode 后的二进制数据」
+      const buffer = new ArrayBuffer(FRAME_BYTES);
+      const view = new Float32Array(buffer);
+
+      for (let i = 0; i < POINT_COUNT/8; i++) {           // flatbuffer will be much faster than 1000000 iteration
+        const b = i * 4;
+        view[b + 0] = (Math.random() - 0.5) * 200;
+        view[b + 1] = (Math.random() - 0.5) * 200;
+        view[b + 2] = (Math.random() - 0.5) * 200;
+        view[b + 3] = 1.0;
+      }
+
+      // ⬅️ 相当于 ws.onmessage
+      worker.postMessage(
+        { type: "frame", buffer },
+        [buffer] // transfer，0 copy
+      );
+    }, 100);
 
     // worker.onmessage = (e) => {
     //     if (e.data.type === 'update') {
