@@ -42,7 +42,7 @@ export default function FastPointTextureRender() {
     const size = 1000 // 2243 // 3300;             // 2500000->50FPS, 10000000->20FPS  5000000->35FPS       
     const POINT_COUNT = size * size;
     const FLOATS_PER_POINT = 4
-    const sab = new SharedArrayBuffer(POINT_COUNT * FLOATS_PER_POINT * 4)
+    const sab = new SharedArrayBuffer(POINT_COUNT * FLOATS_PER_POINT * 4 )
 
     const data = new Float32Array(sab) // new Float32Array(POINT_COUNT * 4);
     // 填充初始数据，防止黑屏
@@ -111,11 +111,11 @@ export default function FastPointTextureRender() {
       const buffer = new ArrayBuffer(FRAME_BYTES);
       const view = new Float32Array(buffer);
 
-      for (let i = 0; i < POINT_COUNT/8; i++) {           // flatbuffer will be much faster than 1000000 iteration
+      for (let i = 0; i < POINT_COUNT; i++) {           // flatbuffer will be much faster than 1000000 iteration
         const b = i * 4;
-        view[b + 0] = (Math.random() - 0.5) * 200;
-        view[b + 1] = (Math.random() - 0.5) * 200;
-        view[b + 2] = (Math.random() - 0.5) * 200;
+        view[b + 0] = (Math.random() - 0.5) * 100;
+        view[b + 1] = (Math.random() - 0.5) * 100;
+        view[b + 2] = (Math.random() - 0.5) * 100;
         view[b + 3] = 1.0;
       }
 
@@ -165,3 +165,144 @@ export default function FastPointTextureRender() {
 
   return <div ref={mountRef} style={{ width: "100%", height: "100vh" }} />;
 }
+
+
+// import React, { useEffect, useRef } from "react";
+// import * as THREE from "three";
+// import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
+// import Stats from "stats.js";
+
+// /* global SharedArrayBuffer */
+// export default function FastPointTextureRender() {
+//   const mountRef = useRef(null);
+//   const lastFrameTimeRef = useRef(performance.now());
+//   const FRAME_INTERVAL = 100; // 后端更新频率 10Hz = 100ms
+
+//   useEffect(() => {
+//     const container = mountRef.current;
+//     const stats = new Stats();
+//     container.appendChild(stats.dom);
+
+//     const renderer = new THREE.WebGLRenderer({ antialias: false });
+//     renderer.setSize(container.clientWidth, container.clientHeight);
+//     container.appendChild(renderer.domElement);
+
+//     const scene = new THREE.Scene();
+//     const camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.1, 10000);
+//     camera.position.set(0, 500, 800);
+
+//     const controls = new OrbitControls(camera, renderer.domElement);
+//     controls.enableDamping = true;
+
+//     const size = 1024; 
+//     const POINT_COUNT = size * size;
+//     const FLOATS_PER_POINT = 4;
+    
+//     // --- 关键点 1: SAB 空间翻倍 ---
+//     // 存储 [PrevFrame (POINT_COUNT * 4), CurrentFrame (POINT_COUNT * 4)]
+//     const sab = new SharedArrayBuffer(POINT_COUNT * FLOATS_PER_POINT * 4 * 2);
+//     const data = new Float32Array(sab);
+
+//     // --- 关键点 2: DataTexture 高度翻倍 (size * 2) ---
+//     const texture = new THREE.DataTexture(data, size, size * 2, THREE.RGBAFormat, THREE.FloatType);
+//     texture.minFilter = THREE.NearestFilter;
+//     texture.magFilter = THREE.NearestFilter;
+//     texture.needsUpdate = true;
+
+//     const geometry = new THREE.BufferGeometry();
+//     const indices = new Float32Array(POINT_COUNT * 2);
+//     for (let i = 0; i < POINT_COUNT; i++) {
+//       indices[i * 2] = (i % size) / size;
+//       indices[i * 2 + 1] = Math.floor(i / size) / size; // 归一化的 0-1 坐标
+//     }
+//     geometry.setAttribute('reference', new THREE.BufferAttribute(indices, 2));
+
+//     const material = new THREE.ShaderMaterial({
+//       uniforms: {
+//         uTexture: { value: texture },
+//         uPointSize: { value: 2.0 },
+//         uLerp: { value: 0.0 } // 0.0 表示完全在旧帧，1.0 表示完全在新帧
+//       },
+//       vertexShader: `
+//         attribute vec2 reference;
+//         uniform sampler2D uTexture;
+//         uniform float uPointSize;
+//         uniform float uLerp;
+
+//         void main() {
+//           // 采样上一帧 (Texture上半部: v 0.0 -> 0.5)
+//           vec4 posPrev = texture2D(uTexture, vec2(reference.x, reference.y * 0.5));
+//           // 采样当前帧 (Texture下半部: v 0.5 -> 1.0)
+//           vec4 posCurr = texture2D(uTexture, vec2(reference.x, reference.y * 0.5 + 0.5));
+          
+//           // --- 关键点 3: 线性插值 ---
+//           vec3 mixedPos = mix(posPrev.xyz, posCurr.xyz, uLerp);
+          
+//           vec4 mvPosition = modelViewMatrix * vec4(mixedPos, 1.0);
+//           gl_Position = projectionMatrix * mvPosition;
+//           gl_PointSize = uPointSize * (300.0 / -mvPosition.z);
+//           gl_PointSize = clamp(gl_PointSize, 1.0, 50.0);
+//         }
+//       `,
+//       fragmentShader: `
+//         void main() {
+//           if (distance(gl_PointCoord, vec2(0.5)) > 0.5) discard;
+//           gl_FragColor = vec4(0.0, 1.0, 0.9, 1.0);
+//         }
+//       `
+//     });
+
+//     const points = new THREE.Points(geometry, material);
+//     scene.add(points);
+
+//     // Worker 逻辑
+//     const worker = new Worker(new URL('./data_stream.worker.js', import.meta.url));
+//     worker.postMessage({ type: 'init', sab: sab, count: POINT_COUNT });
+    
+//     worker.onmessage = (e) => {
+//         if(e.data.type === 'frameReady') {
+//             // 当 Worker 写入完成，重置插值计时器
+//             lastFrameTimeRef.current = performance.now();
+//             texture.needsUpdate = true;
+//         }
+//     }
+
+//     // 模拟后端数据
+//     setInterval(() => {
+//       const buffer = new ArrayBuffer(POINT_COUNT * 4 * 4);
+//       const view = new Float32Array(buffer);
+//       // 模拟一些随时间变化的位移
+//       const time = Date.now() * 0.001;
+//       for (let i = 0; i < POINT_COUNT; i++) {
+//         const b = i * 4;
+//         view[b+0] = Math.cos(i + time) * 200; 
+//         view[b+1] = Math.sin(i + time) * 200;
+//         view[b+2] = (Math.random() - 0.5) * 50;
+//         view[b+3] = 1.0;
+//       }
+//       worker.postMessage({ type: "frame", buffer }, [buffer]);
+//     }, FRAME_INTERVAL);
+
+//     function animate() {
+//       requestAnimationFrame(animate);
+      
+//       // --- 关键点 4: 计算插值进度 ---
+//       const now = performance.now();
+//       const elapsed = now - lastFrameTimeRef.current;
+//       const lerp = Math.min(elapsed / FRAME_INTERVAL, 1.0); // 映射到 0-1
+//       material.uniforms.uLerp.value = lerp;
+
+//       stats.update();
+//       controls.update();
+//       renderer.render(scene, camera);
+//     }
+//     animate();
+
+//     return () => {
+//       worker.terminate();
+//       renderer.dispose();
+//     };
+//   }, []);
+
+//   return <div ref={mountRef} style={{ width: "100%", height: "100vh" }} />;
+// }

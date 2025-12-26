@@ -20,13 +20,13 @@ self.onmessage = (e) => {
     if(e.data.type == "frame") {
         const incoming = new Float32Array(e.data.buffer);
 
-        // console.log("count is: ", count,"incoming is: ", incoming, incoming.buffer.byteLength, incoming.length)
+    // console.log("count is: ", count,"incoming is: ", incoming, incoming.buffer.byteLength, incoming.length)
     // 模拟 decode 后 → 写 SAB
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < incoming.length / 4; i++) {
       const b = i * 4;
-      pointBuffer[b + 0] += incoming[(b + 0)%incoming.length];
-      pointBuffer[b + 1] += incoming[(b + 1)%incoming.length];
-      pointBuffer[b + 2] += incoming[(b + 2)%incoming.length];
+      pointBuffer[b + 0] += incoming[(b + 0)];
+      pointBuffer[b + 1] += incoming[(b + 1)];
+      pointBuffer[b + 2] += incoming[(b + 2)];
       pointBuffer[b + 3] = 1.0;
     }
     }
